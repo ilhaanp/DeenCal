@@ -5,7 +5,8 @@
     "time": "18:30",
     "location": "Masjid An-Noor",
     "type": "halaqa",
-    "notes": "Short and reflective."
+    "notes": "Short and reflective.",
+    "date": "2026-01-24"
   },
   {
     "id": "event-2",
@@ -13,7 +14,8 @@
     "time": "19:15",
     "location": "Community Center",
     "type": "masjid",
-    "notes": "Happens after Maghrib."
+    "notes": "Happens after Maghrib.",
+    "date": "2026-01-25"
   },
   {
     "id": "event-3",
@@ -21,6 +23,25 @@
     "time": "20:00",
     "location": "Home",
     "type": "habit",
-    "notes": "15 minutes, quiet space."
+    "notes": "15 minutes, quiet space.",
+    "date": "2026-01-26"
+  },
+  {
+    "id": "event-4",
+    "title": "Daily Dhikr Circle",
+    "time": "17:00",
+    "location": "Masjid An-Noor",
+    "type": "halaqa",
+    "notes": "Collective remembrance.",
+    "date": "2026-01-27"
+  },
+  {
+    "id": "event-5",
+    "title": "Study Session - Islamic History",
+    "time": "19:00",
+    "location": "Library",
+    "type": "halaqa",
+    "notes": "Prepare chapter 2.",
+    "date": "2026-01-28"
   }
 ]
