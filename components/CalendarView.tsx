@@ -10,6 +10,9 @@ export type CalendarEvent = {
   location: string;
   type: string;
   notes?: string;
+  startTime?: string; // ISO
+  endTime?: string;   // ISO
+  protected?: boolean; // true for prayer times
 };
 
 type ViewType = 'yearly' | 'monthly' | 'weekly' | 'daily';

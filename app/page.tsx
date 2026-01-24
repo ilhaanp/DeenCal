@@ -43,15 +43,25 @@ const generatePrayerEvents = (): CalendarEvent[] => {
   while (currentDate <= endDate) {
     prayerNames.forEach((prayer, index) => {
       const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+      const time = prayerTimes[prayer];
+      const [hour, minute] = time.split(':').map(Number);
+      
+      // Create ISO timestamps for prayer time (15 min duration)
+      const startTime = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute);
+      const endTime = new Date(startTime);
+      endTime.setMinutes(endTime.getMinutes() + 15);
       
       events.push({
         id: `prayer-${prayer}-${dateStr}`,
         title: prayer.charAt(0).toUpperCase() + prayer.slice(1),
-        time: prayerTimes[prayer],
+        time: time,
         date: dateStr,
         location: 'Masjid',
         type: 'prayer' as const,
-        notes: `${prayerNames.length - index} times to pray today`
+        notes: `${prayerNames.length - index} times to pray today`,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        protected: true // Mark prayer times as protected
       });
     });
     
@@ -59,6 +69,59 @@ const generatePrayerEvents = (): CalendarEvent[] => {
   }
   
   return events;
+};
+
+// Conflict detection: Check if a time range overlaps with any protected event
+const isProtectedConflict = (
+  startTime: string,
+  endTime: string,
+  events: CalendarEvent[]
+): { hasConflict: boolean; conflictingEvent?: CalendarEvent } => {
+  const requestStart = new Date(startTime).getTime();
+  const requestEnd = new Date(endTime).getTime();
+
+  for (const event of events) {
+    if (!event.protected || !event.startTime || !event.endTime) continue;
+
+    const eventStart = new Date(event.startTime).getTime();
+    const eventEnd = new Date(event.endTime).getTime();
+
+    // Check for overlap: events overlap if one starts before the other ends
+    const overlaps = requestStart < eventEnd && requestEnd > eventStart;
+
+    if (overlaps) {
+      return { hasConflict: true, conflictingEvent: event };
+    }
+  }
+
+  return { hasConflict: false };
+};
+
+// Find the next available time after a protected event
+const findNextAvailableTime = (
+  afterTime: string,
+  durationMinutes: number,
+  events: CalendarEvent[]
+): { startTime: string; endTime: string } => {
+  // Start 5 minutes after the protected event ends (buffer time)
+  const suggestedStart = new Date(afterTime);
+  suggestedStart.setMinutes(suggestedStart.getMinutes() + 5);
+
+  const suggestedEnd = new Date(suggestedStart);
+  suggestedEnd.setMinutes(suggestedEnd.getMinutes() + durationMinutes);
+
+  // Check if this new time also conflicts
+  const check = isProtectedConflict(suggestedStart.toISOString(), suggestedEnd.toISOString(), events);
+  
+  if (check.hasConflict && check.conflictingEvent?.endTime) {
+    // Recursively find next slot
+    return findNextAvailableTime(check.conflictingEvent.endTime, durationMinutes, events);
+  }
+
+  return {
+    startTime: suggestedStart.toISOString(),
+    endTime: suggestedEnd.toISOString()
+  };
 };
 
 export default function HomePage() {
@@ -105,46 +168,85 @@ export default function HomePage() {
       const intent = data.intent as CommandIntent;
       let assistantResponse = '';
 
-      // Handle schedule_event intent
+      // Handle schedule_event intent with Sacred Time Protection
       if (intent.type === 'schedule_event') {
-        const startDate = new Date(intent.startTime);
-        const endDate = new Date(intent.endTime);
-        const startTimeStr = isoToTimeString(intent.startTime);
-        const endTimeStr = isoToTimeString(intent.endTime);
-        const dateStr = startDate.toISOString().split('T')[0];
+        // Check for conflicts with protected prayer times
+        const conflict = isProtectedConflict(intent.startTime, intent.endTime, events);
 
-        const newEvent: CalendarEvent = {
-          id: `event-${Date.now()}`,
-          title: intent.title,
-          time: startTimeStr,
-          date: dateStr,
-          location: 'TBD',
-          type: 'meeting',
-          notes: `Scheduled via chat`
-        };
+        if (conflict.hasConflict && conflict.conflictingEvent) {
+          // Calculate duration of requested event
+          const duration = (new Date(intent.endTime).getTime() - new Date(intent.startTime).getTime()) / (1000 * 60);
+          
+          // Find next available time after the prayer
+          const alternative = findNextAvailableTime(conflict.conflictingEvent.endTime!, duration, events);
+          const altStartStr = isoToTimeString(alternative.startTime);
+          const altEndStr = isoToTimeString(alternative.endTime);
+          
+          // Respectfully inform about the conflict and suggest alternative
+          assistantResponse = `That time overlaps with ${conflict.conflictingEvent.title}. I can schedule "${intent.title}" after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+        } else {
+          // No conflict - schedule the event
+          const startDate = new Date(intent.startTime);
+          const endDate = new Date(intent.endTime);
+          const startTimeStr = isoToTimeString(intent.startTime);
+          const endTimeStr = isoToTimeString(intent.endTime);
+          const dateStr = startDate.toISOString().split('T')[0];
 
-        setEvents((prev) => [...prev, newEvent]);
-        assistantResponse = `✓ Scheduled "${intent.title}" from ${startTimeStr}–${endTimeStr}. It's been added to your calendar.`;
+          const newEvent: CalendarEvent = {
+            id: `event-${Date.now()}`,
+            title: intent.title,
+            time: startTimeStr,
+            date: dateStr,
+            location: 'TBD',
+            type: 'meeting',
+            notes: `Scheduled via chat`,
+            startTime: intent.startTime,
+            endTime: intent.endTime,
+            protected: false
+          };
+
+          setEvents((prev) => [...prev, newEvent]);
+          assistantResponse = `✓ Scheduled "${intent.title}" from ${startTimeStr}–${endTimeStr}. It's been added to your calendar.`;
+        }
       }
-      // Handle reschedule_event intent
+      // Handle reschedule_event intent with Sacred Time Protection
       else if (intent.type === 'reschedule_event') {
         const eventToReschedule = events.find(e => e.title.toLowerCase() === intent.eventTitle.toLowerCase());
 
         if (!eventToReschedule) {
           assistantResponse = `I couldn't find "${intent.eventTitle}" on your calendar. Could you clarify which event you'd like to reschedule?`;
+        } else if (eventToReschedule.protected) {
+          // Never allow rescheduling protected prayer times
+          assistantResponse = `Prayer times are protected and cannot be rescheduled. Would you like to schedule something around them instead?`;
         } else {
-          const newStartTime = isoToTimeString(intent.newStartTime);
-          const newEndTime = isoToTimeString(intent.newEndTime);
-          const newDate = new Date(intent.newStartTime).toISOString().split('T')[0];
+          // Check for conflicts with the new time
+          const conflict = isProtectedConflict(intent.newStartTime, intent.newEndTime, events);
 
-          setEvents((prev) =>
-            prev.map((e) =>
-              e.id === eventToReschedule.id
-                ? { ...e, time: newStartTime, date: newDate }
-                : e
-            )
-          );
-          assistantResponse = `✓ Rescheduled "${intent.eventTitle}" to ${newStartTime}–${newEndTime}. The calendar has been updated.`;
+          if (conflict.hasConflict && conflict.conflictingEvent) {
+            // Calculate duration
+            const duration = (new Date(intent.newEndTime).getTime() - new Date(intent.newStartTime).getTime()) / (1000 * 60);
+            
+            // Find alternative
+            const alternative = findNextAvailableTime(conflict.conflictingEvent.endTime!, duration, events);
+            const altStartStr = isoToTimeString(alternative.startTime);
+            const altEndStr = isoToTimeString(alternative.endTime);
+            
+            assistantResponse = `That new time overlaps with ${conflict.conflictingEvent.title}. I can reschedule "${intent.eventTitle}" to after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+          } else {
+            // No conflict - reschedule the event
+            const newStartTime = isoToTimeString(intent.newStartTime);
+            const newEndTime = isoToTimeString(intent.newEndTime);
+            const newDate = new Date(intent.newStartTime).toISOString().split('T')[0];
+
+            setEvents((prev) =>
+              prev.map((e) =>
+                e.id === eventToReschedule.id
+                  ? { ...e, time: newStartTime, date: newDate, startTime: intent.newStartTime, endTime: intent.newEndTime }
+                  : e
+              )
+            );
+            assistantResponse = `✓ Rescheduled "${intent.eventTitle}" to ${newStartTime}–${newEndTime}. The calendar has been updated.`;
+          }
         }
       }
       // Handle suggest_opportunities intent
