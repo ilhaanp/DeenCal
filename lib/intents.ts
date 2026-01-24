@@ -1,4 +1,25 @@
-export type Intent = 'schedule' | 'ask_free' | 'prayer_window' | 'unknown';
+export type ScheduleEventIntent = {
+  type: 'schedule_event';
+  title: string;
+  startTime: string; // ISO
+  endTime: string;   // ISO
+};
+
+export type RescheduleEventIntent = {
+  type: 'reschedule_event';
+  eventTitle: string;
+  newStartTime: string; // ISO
+  newEndTime: string;   // ISO
+};
+
+export type SuggestOpportunitiesIntent = {
+  type: 'suggest_opportunities';
+};
+
+export type CommandIntent = 
+  | ScheduleEventIntent 
+  | RescheduleEventIntent 
+  | SuggestOpportunitiesIntent;
 
 export type ParsedIntent = {
   intent: Intent;
@@ -18,6 +39,8 @@ export type ChatMessage = {
   content: string;
   timestamp?: string;
 };
+
+export type Intent = 'schedule' | 'ask_free' | 'prayer_window' | 'unknown';
 
 const containsAny = (text: string, phrases: string[]) =>
   phrases.some((phrase) => text.toLowerCase().includes(phrase));
