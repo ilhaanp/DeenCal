@@ -6,7 +6,7 @@ export type CalendarEvent = {
   id: string;
   title: string;
   time: string;
-  date?: string; // YYYY-MM-DD format
+  date?: string;
   location: string;
   type: string;
   notes?: string;
@@ -47,10 +47,13 @@ const getEventsForDate = (events: CalendarEvent[], date: Date): CalendarEvent[] 
 
 const getWeekDates = (date: Date): Date[] => {
   const current = new Date(date);
-  const first = current.getDate() - current.getDay();
+  const dayOfWeek = current.getDay();
+  const diff = current.getDate() - dayOfWeek;
   const dates: Date[] = [];
+  
   for (let i = 0; i < 7; i++) {
-    dates.push(new Date(current.getFullYear(), current.getMonth(), first + i));
+    const newDate = new Date(current.getFullYear(), current.getMonth(), diff + i);
+    dates.push(newDate);
   }
   return dates;
 };
@@ -106,8 +109,8 @@ const MonthView: React.FC<{ date: Date; events: CalendarEvent[] }> = ({ date, ev
 
 const WeekView: React.FC<{ date: Date; events: CalendarEvent[] }> = ({ date, events }) => {
   const weekDates = getWeekDates(date);
-  const weekStart = new Intl.DateTimeFormat('MMM d', { dateStyle: 'medium' }).format(weekDates[0]);
-  const weekEnd = new Intl.DateTimeFormat('MMM d', { dateStyle: 'medium' }).format(weekDates[6]);
+  const weekStart = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(weekDates[0]);
+  const weekEnd = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(weekDates[6]);
 
   return (
     <div>
