@@ -5,6 +5,7 @@ import { ChatInput } from '@/components/ChatInput';
 import { MessageList } from '@/components/MessageList';
 import { CalendarView, CalendarEvent } from '@/components/CalendarView';
 import { ChatMessage, CommandIntent } from '@/lib/intents';
+import { PrayerTimes, fallbackTimes } from '@/lib/prayer';
 
 type ExternalEvent = {
   id: string;
@@ -23,6 +24,49 @@ function isoToTimeString(iso: string): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
+// Generate prayer events for the entire month using prayer times from prayer.ts
+const generatePrayerEvents = (prayerTimes: PrayerTimes): CalendarEvent[] => {
+  const prayerNames: Array<keyof PrayerTimes> = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
+  const events: CalendarEvent[] = [];
+  
+  // Generate prayer events for the entire month
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+  const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  
+  let currentDate = new Date(startDate);
+  
+  while (currentDate <= endDate) {
+    prayerNames.forEach((prayer, index) => {
+      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+      const time = prayerTimes[prayer];
+      const [hour, minute] = time.split(':').map(Number);
+      
+      // Create ISO timestamps for prayer time (15 min duration)
+      const startTime = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute);
+      const endTime = new Date(startTime);
+      endTime.setMinutes(endTime.getMinutes() + 15);
+      
+      events.push({
+        id: `prayer-${prayer}-${dateStr}`,
+        title: prayer.charAt(0).toUpperCase() + prayer.slice(1),
+        time: time,
+        date: dateStr,
+        location: 'Masjid',
+        type: 'prayer' as const,
+        notes: `${prayerNames.length - index} times to pray today`,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        protected: true // Mark prayer times as protected
+      });
+    });
+    
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  
+  return events;
+};
+
 export default function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -30,37 +74,27 @@ export default function HomePage() {
       content: 'Salaam! Share what you need and I will keep prayer times in mind.'
     }
   ]);
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [prayerTimes, setPrayerTimes] = useState<Record<string, string>>({
-    fajr: '--:--',
-    dhuhr: '--:--',
-    asr: '--:--',
-    maghrib: '--:--',
-    isha: '--:--'
+  const [prayerTimes, setPrayerTimes] = useState<PrayerTimes>(fallbackTimes);
+  const [events, setEvents] = useState<CalendarEvent[]>(() => {
+    // Initialize with fallback prayer times
+    return generatePrayerEvents(fallbackTimes);
   });
   const [pendingRecommendations, setPendingRecommendations] = useState<ExternalEvent[]>([]);
 
   useEffect(() => {
     const loadPrayerTimes = async () => {
-      // Load static prayer times
+      // Load prayer times from API (which uses lib/prayer.ts)
       const res = await fetch('/api/prayer');
       const data = await res.json();
-      setPrayerTimes(data.times);
-    };
-
-    const loadPrayerEvents = async () => {
-      // Load generated prayer events from backend
-      try {
-        const res = await fetch('/api/prayers/generate');
-        const data = await res.json();
-        setEvents(data.events || []);
-      } catch (error) {
-        console.error('Failed to load prayer events', error);
-      }
+      const loadedTimes: PrayerTimes = data.times;
+      setPrayerTimes(loadedTimes);
+      
+      // Regenerate events with the loaded prayer times from prayer.ts
+      const prayerEvents = generatePrayerEvents(loadedTimes);
+      setEvents(prayerEvents);
     };
 
     void loadPrayerTimes();
-    void loadPrayerEvents();
   }, []);
 
   const handleSend = async (text: string) => {
