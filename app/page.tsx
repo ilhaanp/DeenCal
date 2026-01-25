@@ -4,20 +4,21 @@ import { useEffect, useState } from 'react';
 import { ChatInput } from '@/components/ChatInput';
 import { MessageList } from '@/components/MessageList';
 import { CalendarView, CalendarEvent } from '@/components/CalendarView';
-import { ChatMessage, ParsedIntent, CommandIntent } from '@/lib/intents';
-import { listEvents } from '@/lib/scheduler';
-
-// Convert time string HH:MM to ISO datetime
-const timeToISO = (dateStr: string, timeStr: string): string => {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const [hour, minute] = timeStr.split(':').map(Number);
-  return new Date(year, month - 1, day, hour, minute).toISOString();
-};
+import { ChatMessage, CommandIntent } from '@/lib/intents';
 
 // Convert ISO datetime to HH:MM format
 const isoToTimeString = (iso: string): string => {
   const date = new Date(iso);
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+type ExternalEvent = {
+  id: string;
+  title: string;
+  startTime?: string;
+  endTime?: string;
+  location?: string;
+  url?: string;
 };
 
 // Helper function to generate prayer time events for all days
@@ -132,9 +133,8 @@ export default function HomePage() {
     }
   ]);
   const [events, setEvents] = useState<CalendarEvent[]>(() => {
-    const baseEvents = listEvents();
     const prayerEvents = generatePrayerEvents();
-    return [...baseEvents, ...prayerEvents];
+    return [...prayerEvents];
   });
   const [prayerTimes, setPrayerTimes] = useState<Record<string, string>>({
     fajr: '--:--',
@@ -143,6 +143,7 @@ export default function HomePage() {
     maghrib: '--:--',
     isha: '--:--'
   });
+  const [pendingRecommendations, setPendingRecommendations] = useState<ExternalEvent[]>([]);
 
   useEffect(() => {
     const loadPrayerTimes = async () => {
@@ -156,6 +157,64 @@ export default function HomePage() {
   const handleSend = async (text: string) => {
     const userMessage: ChatMessage = { role: 'user', content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMessage]);
+
+    // If the user is confirming a recommended external event, schedule it directly
+    const optionMatch = text.match(/schedule\s+(?:option\s*)?#?(\d+)/i) || text.match(/add\s+(?:option\s*)?#?(\d+)/i);
+    if (optionMatch && pendingRecommendations.length > 0) {
+      const index = Number(optionMatch[1]) - 1;
+      const pick = pendingRecommendations[index];
+
+      if (!pick) {
+        const assistantMessage: ChatMessage = {
+          role: 'assistant',
+          content: "I couldn't find that option. Try a number from the latest list of events.",
+          timestamp: new Date().toISOString()
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        return;
+      }
+
+      const startIso = pick.startTime ?? new Date().toISOString();
+      const endIso = pick.endTime ?? new Date(new Date(startIso).getTime() + 90 * 60 * 1000).toISOString();
+
+      const conflict = isProtectedConflict(startIso, endIso, events);
+
+      let assistantResponse = '';
+
+      if (conflict.hasConflict && conflict.conflictingEvent) {
+        const duration = (new Date(endIso).getTime() - new Date(startIso).getTime()) / (1000 * 60);
+        const alternative = findNextAvailableTime(conflict.conflictingEvent.endTime!, duration, events);
+        const altStartStr = isoToTimeString(alternative.startTime);
+        const altEndStr = isoToTimeString(alternative.endTime);
+        assistantResponse = `That time overlaps with ${conflict.conflictingEvent.title}. I can place "${pick.title}" after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+      } else {
+        const startDate = new Date(startIso);
+        const dateStr = startDate.toISOString().split('T')[0];
+        const newEvent: CalendarEvent = {
+          id: `event-${Date.now()}`,
+          title: pick.title,
+          time: isoToTimeString(startIso),
+          date: dateStr,
+          location: pick.location || 'TBD',
+          type: 'eventbrite',
+          notes: pick.url ? `Source: ${pick.url}` : 'Scheduled from Eventbrite recommendation',
+          startTime: startIso,
+          endTime: endIso,
+          protected: false
+        };
+        setEvents((prev) => [...prev, newEvent]);
+        assistantResponse = `✓ Added "${pick.title}" from the recommendations at ${newEvent.time}.`;
+      }
+
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: assistantResponse,
+        timestamp: new Date().toISOString()
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+      return;
+    }
 
     try {
       const response = await fetch('/api/interpret', {
@@ -187,7 +246,6 @@ export default function HomePage() {
         } else {
           // No conflict - schedule the event
           const startDate = new Date(intent.startTime);
-          const endDate = new Date(intent.endTime);
           const startTimeStr = isoToTimeString(intent.startTime);
           const endTimeStr = isoToTimeString(intent.endTime);
           const dateStr = startDate.toISOString().split('T')[0];
@@ -251,7 +309,33 @@ export default function HomePage() {
       }
       // Handle suggest_opportunities intent
       else if (intent.type === 'suggest_opportunities') {
-        assistantResponse = `Here are some calm moments today:\n\n• After Dhuhr: 1:00 PM – Good for a short break or reading\n• Before Asr: 3:00 PM – Perfect for personal reflection\n• After Isha: 8:30 PM – Wind down time\n\nWould you like to schedule anything?`;
+        try {
+          const recRes = await fetch('/api/eventbrite');
+          const recData = await recRes.json();
+          const recs: ExternalEvent[] = recData.events ?? [];
+          setPendingRecommendations(recs);
+
+          if (recs.length === 0) {
+            assistantResponse = 'I could not find Islamic sports events right now. Want me to check again later?';
+          } else {
+            const formatted = recs
+              .slice(0, 5)
+              .map((ev, idx) => {
+                const start = ev.startTime ? new Date(ev.startTime) : null;
+                const when = start ? `${start.toLocaleDateString()} ${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Time TBA';
+                const place = ev.location ?? 'Location TBA';
+                const link = ev.url ? ` – ${ev.url}` : '';
+                return `${idx + 1}. ${ev.title} (${when}, ${place})${link}`;
+              })
+              .join('\n');
+
+            assistantResponse = `Here are Islamic sports events I found on Eventbrite:\n\n${formatted}\n\nReply with "schedule #" to add one to your calendar (for example: schedule 2).`;
+          }
+        } catch (err) {
+          console.error('Eventbrite fetch failed', err);
+          assistantResponse = 'I could not reach Eventbrite right now. Want me to try again later?';
+          setPendingRecommendations([]);
+        }
       } else {
         assistantResponse = data.suggestions
           ? data.suggestions.map((s: any) => `• ${s.title}: ${s.detail}`).join('\n')

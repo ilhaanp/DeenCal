@@ -26,8 +26,8 @@ Assistant: "That time overlaps with Maghrib. I can schedule your meeting after p
 ## Stack
 - Next.js (App Router, TypeScript)
 - Tailwind CSS
-- API routes: `/api/interpret` (intent parsing), `/api/prayer` (prayer times)
-- Mock data for events, single LLM-like intent parser (stubbed)
+- API routes: `/api/interpret` (intent parsing), `/api/prayer` (prayer times), `/api/eventbrite` (Islamic sports events feed)
+- Single LLM-like intent parser (stubbed)
 
 ## Development
 1. Install dependencies: `npm install`
@@ -38,9 +38,10 @@ Assistant: "That time overlaps with Maghrib. I can schedule your meeting after p
 - `app/page.tsx`: Conversational UI, calendar state, and Sacred Time Protection logic
 - `app/api/interpret/route.ts`: Intent parsing + suggestion stitching (mocked)
 - `app/api/prayer/route.ts`: Prayer times (mocked)
+- `app/api/eventbrite/route.ts`: Eventbrite search filtered for Islamic + sports events
 - `components/*`: UI pieces (chat, calendar views)
-- `lib/*`: Intent heuristics, prayer helpers, simple scheduler
-- `data/mockEvents.json`: Demo events and habits
+- `lib/*`: Intent heuristics, prayer helpers, scheduler helpers
+- `data/mockEvents.json`: Legacy demo events (no longer seeded by default)
 
 ## How Sacred Time Protection Works
 
@@ -59,3 +60,4 @@ Assistant: "That time overlaps with Maghrib. I can schedule your meeting after p
 - Prayer times use a static placeholder; swap with a provider like AlAdhan and add location later.
 - Suggestions stay explainable and gentle—no automatic scheduling.
 - Protected events (prayers) cannot be deleted or rescheduled by the user.
+- Eventbrite search needs `EVENTBRITE_TOKEN` in your env. Only suggestions are shown; events appear on the calendar after you explicitly schedule them.
