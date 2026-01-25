@@ -3,8 +3,8 @@ import type { Metadata } from 'next';
 import React from 'react';
 
 export const metadata: Metadata = {
-  title: 'Faithful Calendar',
-  description: 'Faith-aware conversational calendar for intentional time stewardship.'
+  title: 'DeenCal',
+  description: 'Prayer-aware conversational calendar for intentional time stewardship.'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

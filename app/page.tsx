@@ -18,6 +18,23 @@ type ExternalEvent = {
   category?: 'community' | 'sports';
 };
 
+const atHomeSuggestions = [
+  'Take 10–15 minutes for a short Quran reflection on a favorite ayah.',
+  'Spend 5–10 minutes in calm dhikr; focus on presence and breath.',
+  'Pray two rakahs with intentional du\'a for your goals and the Ummah.',
+  'Listen to a 10-minute reminder or online halaqa and jot one takeaway.',
+  'Plan tomorrow around salah times so your schedule flows with barakah.'
+];
+
+const isConfirmation = (text: string) => /^(yes|yep|yeah|sure|ok|okay|confirm|sounds good|go ahead|do it)\b/i.test(text.trim());
+
+const formatLocalDate = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // Format ISO time to HH:MM
 function isoToTimeString(iso: string): string {
   const date = new Date(iso);
@@ -29,16 +46,18 @@ const generatePrayerEvents = (prayerTimes: PrayerTimes): CalendarEvent[] => {
   const prayerNames: Array<keyof PrayerTimes> = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'];
   const events: CalendarEvent[] = [];
   
-  // Generate prayer events for the entire month
+  // Generate prayer events for the entire year to keep every day covered
   const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-  const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  const startDate = new Date(today.getFullYear(), 0, 1);
+  const endDate = new Date(today.getFullYear(), 11, 31);
   
   let currentDate = new Date(startDate);
   
   while (currentDate <= endDate) {
+    const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+    const isFriday = currentDate.getDay() === 5;
+
     prayerNames.forEach((prayer, index) => {
-      const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
       const time = prayerTimes[prayer];
       const [hour, minute] = time.split(':').map(Number);
       
@@ -60,6 +79,27 @@ const generatePrayerEvents = (prayerTimes: PrayerTimes): CalendarEvent[] => {
         protected: true // Mark prayer times as protected
       });
     });
+
+    if (isFriday) {
+      const time = prayerTimes.dhuhr;
+      const [hour, minute] = time.split(':').map(Number);
+      const startTime = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), hour, minute);
+      const endTime = new Date(startTime);
+      endTime.setMinutes(endTime.getMinutes() + 45);
+
+      events.push({
+        id: `jummah-${dateStr}`,
+        title: 'Jumu‘ah',
+        time,
+        date: dateStr,
+        location: 'Masjid',
+        type: 'prayer',
+        notes: 'Weekly Jumu‘ah prayer',
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        protected: true
+      });
+    }
     
     currentDate.setDate(currentDate.getDate() + 1);
   }
@@ -68,18 +108,14 @@ const generatePrayerEvents = (prayerTimes: PrayerTimes): CalendarEvent[] => {
 };
 
 export default function HomePage() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: 'assistant',
-      content: 'Salaam! Share what you need and I will keep prayer times in mind.'
-    }
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [prayerTimes, setPrayerTimes] = useState<PrayerTimes>(fallbackTimes);
   const [events, setEvents] = useState<CalendarEvent[]>(() => {
     // Initialize with fallback prayer times
     return generatePrayerEvents(fallbackTimes);
   });
   const [pendingRecommendations, setPendingRecommendations] = useState<ExternalEvent[]>([]);
+  const [pendingEvent, setPendingEvent] = useState<{ event: CalendarEvent; replaceId?: string } | null>(null);
 
   useEffect(() => {
     const loadPrayerTimes = async () => {
@@ -100,6 +136,25 @@ export default function HomePage() {
   const handleSend = async (text: string) => {
     const userMessage: ChatMessage = { role: 'user', content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMessage]);
+
+    // If user confirms a pending suggestion, finalize it
+    if (pendingEvent && isConfirmation(text)) {
+      if (pendingEvent.replaceId) {
+        setEvents((prev) => prev.map((e) => (e.id === pendingEvent.replaceId ? { ...pendingEvent.event } : e)));
+      } else {
+        setEvents((prev) => [...prev, pendingEvent.event]);
+      }
+      const confirmMessage: ChatMessage = {
+        role: 'assistant',
+        content: pendingEvent.replaceId
+          ? `✓ Updated "${pendingEvent.event.title}" to ${pendingEvent.event.time}.`
+          : `✓ Scheduled "${pendingEvent.event.title}" for ${pendingEvent.event.time}. It's on your calendar.`,
+        timestamp: new Date().toISOString()
+      };
+      setMessages((prev) => [...prev, confirmMessage]);
+      setPendingEvent(null);
+      return;
+    }
 
     // If the user is confirming a recommended external event, schedule it directly
     const optionMatch = text.match(/schedule\s+(?:option\s*)?#?(\d+)/i) || text.match(/add\s+(?:option\s*)?#?(\d+)/i);
@@ -152,10 +207,26 @@ export default function HomePage() {
           const altData = await altRes.json();
           const altStartStr = isoToTimeString(altData.startTime);
           const altEndStr = isoToTimeString(altData.endTime);
-          assistantResponse = `That time overlaps with ${conflictData.conflictingEvent.title}. I can place "${pick.title}" after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+          const altDateStr = formatLocalDate(new Date(altData.startTime));
+
+          const altEvent: CalendarEvent = {
+            id: `event-${Date.now()}`,
+            title: pick.title,
+            time: altStartStr,
+            date: altDateStr,
+            location: pick.location || 'TBD',
+            type: 'eventbrite',
+            notes: pick.url ? `Source: ${pick.url}` : 'Scheduled from Eventbrite recommendation (after prayer)',
+            startTime: altData.startTime,
+            endTime: altData.endTime,
+            protected: false
+          };
+
+          setPendingEvent({ event: altEvent });
+          assistantResponse = `That time overlaps with ${conflictData.conflictingEvent.title}. I can place "${pick.title}" after prayer at ${altStartStr}–${altEndStr}. Should I book it?`;
         } else {
           const startDate = new Date(startIso);
-          const dateStr = startDate.toISOString().split('T')[0];
+          const dateStr = formatLocalDate(startDate);
           const newEvent: CalendarEvent = {
             id: `event-${Date.now()}`,
             title: pick.title,
@@ -204,6 +275,15 @@ export default function HomePage() {
 
       // Handle schedule_event intent with Sacred Time Protection
       if (intent.type === 'schedule_event') {
+        if (intent.ambiguous) {
+          const assistantMessage: ChatMessage = {
+            role: 'assistant',
+            content: 'I can schedule that — what date did you have in mind (today, tomorrow, or a specific day)?',
+            timestamp: new Date().toISOString()
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+          return;
+        }
         try {
           // Call backend to check conflicts and find alternatives
           const conflictRes = await fetch('/api/schedule-helper', {
@@ -237,14 +317,30 @@ export default function HomePage() {
             const altData = await altRes.json();
             const altStartStr = isoToTimeString(altData.startTime);
             const altEndStr = isoToTimeString(altData.endTime);
-            
-            assistantResponse = `That time overlaps with ${conflictData.conflictingEvent.title}. I can schedule "${intent.title}" after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+            const altStartDate = new Date(altData.startTime);
+            const altDateStr = formatLocalDate(altStartDate);
+
+            const altEvent: CalendarEvent = {
+              id: `event-${Date.now()}`,
+              title: intent.title,
+              time: altStartStr,
+              date: altDateStr,
+              location: 'TBD',
+              type: 'meeting',
+              notes: 'Scheduled after prayer to avoid conflict',
+              startTime: altData.startTime,
+              endTime: altData.endTime,
+              protected: false
+            };
+
+            setPendingEvent({ event: altEvent });
+            assistantResponse = `That time overlaps with ${conflictData.conflictingEvent.title}. I can place "${intent.title}" after prayer at ${altStartStr}–${altEndStr}. Should I book it?`;
           } else {
             // No conflict - schedule the event
             const startDate = new Date(intent.startTime);
             const startTimeStr = isoToTimeString(intent.startTime);
             const endTimeStr = isoToTimeString(intent.endTime);
-            const dateStr = startDate.toISOString().split('T')[0];
+            const dateStr = formatLocalDate(startDate);
 
             const newEvent: CalendarEvent = {
               id: `event-${Date.now()}`,
@@ -308,13 +404,22 @@ export default function HomePage() {
               const altData = await altRes.json();
               const altStartStr = isoToTimeString(altData.startTime);
               const altEndStr = isoToTimeString(altData.endTime);
-              
-              assistantResponse = `That new time overlaps with ${conflictData.conflictingEvent.title}. I can reschedule "${intent.eventTitle}" to after prayer instead, from ${altStartStr}–${altEndStr}. Would you like me to do that?`;
+              const proposedReschedule: CalendarEvent = {
+                ...eventToReschedule,
+                time: altStartStr,
+                date: formatLocalDate(new Date(altData.startTime)),
+                startTime: altData.startTime,
+                endTime: altData.endTime,
+                notes: eventToReschedule.notes ?? 'Rescheduled after prayer'
+              };
+
+              setPendingEvent({ event: proposedReschedule, replaceId: eventToReschedule.id });
+              assistantResponse = `That new time overlaps with ${conflictData.conflictingEvent.title}. I can move "${intent.eventTitle}" to ${altStartStr}–${altEndStr}. Should I update it?`;
             } else {
               // No conflict - reschedule
               const newStartTime = isoToTimeString(intent.newStartTime);
               const newEndTime = isoToTimeString(intent.newEndTime);
-              const newDate = new Date(intent.newStartTime).toISOString().split('T')[0];
+              const newDate = formatLocalDate(new Date(intent.newStartTime));
 
               setEvents((prev) =>
                 prev.map((e) =>
@@ -341,16 +446,10 @@ export default function HomePage() {
           setPendingRecommendations(recs);
 
           if (recs.length === 0) {
-            // Graceful fallback: suggest at-home deen activities
-            const activities = [
-              'This could be a good time for a Quran reflection—even 10 minutes can reset your heart.',
-              'Since there aren\'t events nearby, consider a few moments of dhikr or two rakahs to rebalance your evening.',
-              'No events around, but you could journal your intentions for tomorrow or make dua for the Ummah.',
-              'This might be a perfect time for a short Islamic lecture or reminder, followed by some quiet reflection.',
-              'Consider spending some time in voluntary salah (Duha or Tahajjud) or a brief Quran study session.'
-            ];
-            const randomActivity = activities[Math.floor(Math.random() * activities.length)];
-            assistantResponse = randomActivity;
+            const pickCount = 2 + Math.floor(Math.random() * 2);
+            const shuffled = [...atHomeSuggestions].sort(() => Math.random() - 0.5);
+            const picks = shuffled.slice(0, pickCount).join('\n• ');
+            assistantResponse = `Salaam 🌿 No nearby events right now. Here are beneficial at-home options:\n• ${picks}`;
           } else {
             // Group events by category for better presentation
             const communityEvents = recs.filter((e: any) => e.category === 'community');
@@ -405,15 +504,19 @@ export default function HomePage() {
     }
   };
 
-  return (
-    <div className="flex h-screen w-full bg-white">
+    return (
+      <div className="flex h-screen w-full bg-sand">
       {/* Sidebar - Chat */}
-      <div className="w-72 border-r border-gray-200 bg-gray-50 flex flex-col overflow-hidden">
+      <div className="w-72 border-r border-edge bg-card flex flex-col overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Header */}
-          <div className="p-4 border-b border-gray-200">
-            <h1 className="text-lg font-semibold text-ink">Prayer Assistant</h1>
-            <p className="text-xs text-gray-600 mt-1">Plan with prayer in mind</p>
+          <div className="p-4 border-b border-edge/70">
+            <div className="flex items-center gap-2">
+              <div className="flex flex-col leading-tight">
+                <h1 className="text-xl font-semibold text-ink font-display">DeenCal</h1>
+                <p className="text-xs text-ink/70">your schedulling buddy</p>
+              </div>
+            </div>
           </div>
 
           {/* Messages */}
@@ -423,7 +526,7 @@ export default function HomePage() {
         </div>
 
         {/* Chat Input */}
-        <div className="p-4 border-t border-gray-200 bg-white">
+        <div className="p-4 border-t border-edge/70 bg-card">
           <ChatInput onSend={handleSend} placeholder="Ask about scheduling..." />
         </div>
       </div>
@@ -431,8 +534,8 @@ export default function HomePage() {
       {/* Main Content - Calendar */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Calendar - takes all space */}
-        <div className="flex-1 overflow-hidden bg-gray-50 p-8">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 h-full">
+        <div className="flex-1 overflow-hidden bg-sand p-8">
+          <div className="bg-card rounded-2xl border border-edge/70 shadow-[0_12px_30px_rgba(0,0,0,0.35)] p-6 h-full">
             <CalendarView events={events} prayerTimes={prayerTimes} />
           </div>
         </div>

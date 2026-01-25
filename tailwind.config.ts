@@ -9,10 +9,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        sand: '#F5F1EA',
-        ink: '#1C1C1C',
-        teal: '#1C8178',
-        ember: '#D96C28'
+        sand: '#0D1117',
+        ink: '#E5E7EB',
+        teal: '#0F766E',
+        tealSoft: '#25A18E',
+        ember: '#D96C28',
+        gold: '#C7A24A',
+        cream: '#111827',
+        card: '#0F172A',
+        edge: '#1F2937'
+      },
+      fontFamily: {
+        sans: ['"Inter"', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['"Scheherazade New"', 'serif']
       }
     }
   },

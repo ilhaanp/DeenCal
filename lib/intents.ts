@@ -3,6 +3,7 @@ export type ScheduleEventIntent = {
   title: string;
   startTime: string; // ISO
   endTime: string;   // ISO
+  ambiguous?: boolean;
 };
 
 export type RescheduleEventIntent = {

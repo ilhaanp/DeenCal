@@ -4,6 +4,35 @@ import type { CommandIntent } from '@/lib/intents';
 import { findSuggestions } from '@/lib/scheduler';
 import { getPrayerTimes } from '@/lib/prayer';
 
+const extractTitle = (message: string) => {
+  const original = message.trim();
+  const lower = original.toLowerCase();
+  const stopWords = /(today|tomorrow|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi;
+  const timePattern = /\b\d{1,2}(?::\d{2})?\s*(am|pm)?/gi;
+  const verbsPattern = /(schedule|add|create|book|plan|set up)/gi;
+  const filler = /\b(for|on|at|to|a|the|my|our|an|this|that)\b/gi;
+
+  let working = original
+    .replace(verbsPattern, '')
+    .replace(stopWords, '')
+    .replace(timePattern, '')
+    .replace(/\bmeeting\b/gi, 'meeting')
+    .replace(/\s+/g, ' ');
+
+  working = working.replace(filler, ' ').replace(/\s+/g, ' ').trim();
+
+  if (!working || working.length < 3) {
+    // fallback to a simple, purposeful title
+    if (lower.includes('meeting')) return 'Meeting';
+    if (lower.includes('call')) return 'Call';
+    if (lower.includes('coffee')) return 'Coffee meetup';
+    return 'Planned event';
+  }
+
+  // Capitalize first letter
+  return working.charAt(0).toUpperCase() + working.slice(1);
+};
+
 // Parse user message into structured CommandIntent with ISO timestamps
 const parseCommandIntent = (message: string): CommandIntent => {
   const lowerMsg = message.toLowerCase();
@@ -11,29 +40,32 @@ const parseCommandIntent = (message: string): CommandIntent => {
   // Check for scheduling keywords
   if (/schedule|add|create|book|plan|set up/i.test(message)) {
     // Extract title
-    let title = 'Event';
-    const titleMatch = message.match(/(?:schedule|add|create|book|plan|set up)\s+(?:a\s+)?(?:meeting\s+)?(?:with\s+)?([^(]+?)(?:\s+(?:on|for|at|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday))?$/i);
-    if (titleMatch) {
-      title = titleMatch[1].trim().replace(/\s+(?:at|in|during|morning|afternoon|evening|night|\d+(?:am|pm|:).*)?$/i, '').trim();
-    }
+    let title = extractTitle(message);
     
-    // Parse date
-    let date = new Date();
-    if (lowerMsg.includes('tomorrow')) {
+    // Parse date (respecting local timezone)
+    const now = new Date();
+    let date = new Date(now);
+    let ambiguous = false;
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const hasTomorrow = lowerMsg.includes('tomorrow');
+    const hasToday = lowerMsg.includes('today');
+    const hasNextWeek = lowerMsg.includes('next week');
+    const matchedDayIndex = dayNames.findIndex((d) => lowerMsg.includes(d));
+    const hasExplicitDay = matchedDayIndex !== -1;
+
+    if (hasTomorrow) {
       date.setDate(date.getDate() + 1);
+    } else if (hasToday) {
+      // keep as is
+    } else if (hasNextWeek) {
+      date.setDate(date.getDate() + 7);
+    } else if (hasExplicitDay) {
+      const currentDay = now.getDay();
+      let daysAhead = matchedDayIndex - currentDay;
+      if (daysAhead <= 0) daysAhead += 7;
+      date.setDate(date.getDate() + daysAhead);
     } else {
-      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      for (let i = 0; i < dayNames.length; i++) {
-        if (lowerMsg.includes(dayNames[i])) {
-          const today = new Date();
-          const currentDay = today.getDay();
-          let daysAhead = i - currentDay;
-          if (daysAhead <= 0) daysAhead += 7;
-          date = new Date(today);
-          date.setDate(date.getDate() + daysAhead);
-          break;
-        }
-      }
+      ambiguous = true;
     }
     
     // Parse time
@@ -66,17 +98,18 @@ const parseCommandIntent = (message: string): CommandIntent => {
       type: 'schedule_event' as const,
       title,
       startTime: startDate.toISOString(),
-      endTime: endDate.toISOString()
+      endTime: endDate.toISOString(),
+      ambiguous
     };
   }
   
   // Check for rescheduling keywords
   if (/reschedule|move|change.*time|postpone/i.test(message)) {
     return {
-      type: 'reschedule_event' as const,
-      eventTitle: 'Meeting',
-      newStartTime: new Date().toISOString(),
-      newEndTime: new Date(Date.now() + 3600000).toISOString()
+      type: 'schedule_event' as const,
+      title,
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString()
     };
   }
   
