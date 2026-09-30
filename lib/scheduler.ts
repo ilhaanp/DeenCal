@@ -2,16 +2,23 @@ import events from '../data/mockEvents.json';
 import { describeRelation, PrayerTimes } from './prayer';
 import { ParsedIntent } from './intents';
 
+type EventType = 'halaqa' | 'masjid' | 'habit';
+
 type Event = {
   id: string;
   title: string;
   time: string;
   location: string;
-  type: 'halaqa' | 'masjid' | 'habit';
+  type: EventType;
   notes?: string;
+  date?: string;
 };
 
-export const listEvents = (): Event[] => events;
+export const listEvents = (): Event[] =>
+  events.map((event) => ({
+    ...event,
+    type: event.type as EventType
+  }));
 
 export const findSuggestions = (intent: ParsedIntent, prayers: PrayerTimes) => {
   if (intent.intent === 'ask_free') {
