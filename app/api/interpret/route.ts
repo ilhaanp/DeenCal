@@ -9,7 +9,7 @@ const extractTitle = (message: string) => {
   const lower = original.toLowerCase();
   const stopWords = /(today|tomorrow|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/gi;
   const timePattern = /\b\d{1,2}(?::\d{2})?\s*(am|pm)?/gi;
-  const verbsPattern = /(schedule|add|create|book|plan|set up)/gi;
+  const verbsPattern = /(reschedule|schedule|add|create|book|plan|set up|move|postpone)/gi;
   const filler = /\b(for|on|at|to|a|the|my|our|an|this|that)\b/gi;
 
   let working = original
@@ -33,67 +33,64 @@ const extractTitle = (message: string) => {
   return working.charAt(0).toUpperCase() + working.slice(1);
 };
 
+const parseEventWindow = (message: string) => {
+  const lowerMsg = message.toLowerCase();
+  const now = new Date();
+  const date = new Date(now);
+  let ambiguous = false;
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const matchedDayIndex = dayNames.findIndex((d) => lowerMsg.includes(d));
+
+  if (lowerMsg.includes('tomorrow')) {
+    date.setDate(date.getDate() + 1);
+  } else if (lowerMsg.includes('today')) {
+    // keep as is
+  } else if (lowerMsg.includes('next week')) {
+    date.setDate(date.getDate() + 7);
+  } else if (matchedDayIndex !== -1) {
+    const currentDay = now.getDay();
+    let daysAhead = matchedDayIndex - currentDay;
+    if (daysAhead <= 0) daysAhead += 7;
+    date.setDate(date.getDate() + daysAhead);
+  } else {
+    ambiguous = true;
+  }
+
+  let hour = 14;
+  let minute = 0;
+  if (lowerMsg.includes('morning')) {
+    hour = 9;
+  } else if (lowerMsg.includes('afternoon')) {
+    hour = 14;
+  } else if (lowerMsg.includes('evening')) {
+    hour = 18;
+  } else if (lowerMsg.includes('night')) {
+    hour = 20;
+  } else {
+    const timeMatch = message.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+    if (timeMatch) {
+      hour = parseInt(timeMatch[1]);
+      minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const meridiem = timeMatch[3]?.toLowerCase();
+      if (meridiem === 'pm' && hour !== 12) hour += 12;
+      else if (meridiem === 'am' && hour === 12) hour = 0;
+    }
+  }
+
+  const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute);
+  const endDate = new Date(startDate);
+  endDate.setHours(endDate.getHours() + 1);
+
+  return { startDate, endDate, ambiguous };
+};
+
 // Parse user message into structured CommandIntent with ISO timestamps
 const parseCommandIntent = (message: string): CommandIntent => {
-  const lowerMsg = message.toLowerCase();
-  
   // Check for scheduling keywords
   if (/schedule|add|create|book|plan|set up/i.test(message)) {
-    // Extract title
-    let title = extractTitle(message);
-    
-    // Parse date (respecting local timezone)
-    const now = new Date();
-    let date = new Date(now);
-    let ambiguous = false;
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const hasTomorrow = lowerMsg.includes('tomorrow');
-    const hasToday = lowerMsg.includes('today');
-    const hasNextWeek = lowerMsg.includes('next week');
-    const matchedDayIndex = dayNames.findIndex((d) => lowerMsg.includes(d));
-    const hasExplicitDay = matchedDayIndex !== -1;
+    const title = extractTitle(message);
+    const { startDate, endDate, ambiguous } = parseEventWindow(message);
 
-    if (hasTomorrow) {
-      date.setDate(date.getDate() + 1);
-    } else if (hasToday) {
-      // keep as is
-    } else if (hasNextWeek) {
-      date.setDate(date.getDate() + 7);
-    } else if (hasExplicitDay) {
-      const currentDay = now.getDay();
-      let daysAhead = matchedDayIndex - currentDay;
-      if (daysAhead <= 0) daysAhead += 7;
-      date.setDate(date.getDate() + daysAhead);
-    } else {
-      ambiguous = true;
-    }
-    
-    // Parse time
-    let hour = 14, minute = 0;
-    if (lowerMsg.includes('morning')) {
-      hour = 9;
-    } else if (lowerMsg.includes('afternoon')) {
-      hour = 14;
-    } else if (lowerMsg.includes('evening')) {
-      hour = 18;
-    } else if (lowerMsg.includes('night')) {
-      hour = 20;
-    } else {
-      const timeMatch = message.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
-      if (timeMatch) {
-        hour = parseInt(timeMatch[1]);
-        minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-        const meridiem = timeMatch[3]?.toLowerCase();
-        if (meridiem === 'pm' && hour !== 12) hour += 12;
-        else if (meridiem === 'am' && hour === 12) hour = 0;
-      }
-    }
-    
-    // Create ISO timestamps (1 hour duration)
-    const startDate = new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute);
-    const endDate = new Date(startDate);
-    endDate.setHours(endDate.getHours() + 1);
-    
     return {
       type: 'schedule_event' as const,
       title,
@@ -102,14 +99,17 @@ const parseCommandIntent = (message: string): CommandIntent => {
       ambiguous
     };
   }
-  
+
   // Check for rescheduling keywords
   if (/reschedule|move|change.*time|postpone/i.test(message)) {
+    const eventTitle = extractTitle(message);
+    const { startDate, endDate } = parseEventWindow(message);
+
     return {
-      type: 'schedule_event' as const,
-      title,
-      startTime: startDate.toISOString(),
-      endTime: endDate.toISOString()
+      type: 'reschedule_event' as const,
+      eventTitle,
+      newStartTime: startDate.toISOString(),
+      newEndTime: endDate.toISOString()
     };
   }
   
