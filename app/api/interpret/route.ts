@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server';
-import { interpretMessage } from '@/lib/intents';
 import type { CommandIntent } from '@/lib/intents';
-import { findSuggestions } from '@/lib/scheduler';
 import { getPrayerTimes } from '@/lib/prayer';
 
 const extractTitle = (message: string) => {
